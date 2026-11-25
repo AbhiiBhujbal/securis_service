@@ -1,17 +1,19 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../data/technician_store.dart';
 import '../models/repair_ticket.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
 
 class TicketDetailsScreen extends StatefulWidget {
   const TicketDetailsScreen({
@@ -34,6 +36,15 @@ class TicketDetailsScreen extends StatefulWidget {
 }
 
 class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
+  // Premium Navy + Teal theme
+  static const Color navy = Color(0xFF172B4D);
+  static const Color navyDark = Color(0xFF10213D);
+  static const Color teal = Color(0xFF16B8A6);
+  static const Color background = Color(0xFFF4F7FB);
+  static const Color textColor = Color(0xFF26354D);
+  static const Color muted = Color(0xFF8491A5);
+  static const Color borderColor = Color(0xFFE7ECF3);
+
   final _formKey = GlobalKey<FormState>();
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -48,10 +59,17 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
   bool _completeDialogOpen = false;
   bool _scheduling = false;
 
-  // Technician live GPS tracking
   StreamSubscription<Position>? _positionSubscription;
   Position? _technicianPosition;
   bool _locationLoading = false;
+
+  List<LatLng> _routePoints = [];
+  bool _routeLoading = false;
+
+  double? _remainingDistanceKm;
+  double? _remainingDurationMinutes;
+
+  LatLng? _pendingRoutePoint;
 
   bool get isAdmin => widget.role.toLowerCase() == 'admin';
 
@@ -66,14 +84,34 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
     _status = widget.ticket.status;
     _assignedTo = widget.ticket.assignedTo;
     _photoPaths = List<String>.from(widget.ticket.photoPaths);
+
+    debugPrint('IS ADMIN: $isAdmin');
+    debugPrint('TICKET STATUS: ${widget.ticket.status}');
+
+    if (!isAdmin && widget.ticket.status == 'In Progress') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          debugPrint('STARTING TECHNICIAN LIVE TRACKING...');
+          _startTechnicianLiveTracking();
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
+    debugPrint('STOPPING TECHNICIAN GPS TRACKING');
+
+    _positionSubscription?.cancel();
     _notesController.dispose();
     _resolutionController.dispose();
+
     super.dispose();
   }
+
+  // ============================================================
+  // COMMON UI HELPERS
+  // ============================================================
 
   void _showMessage(
       String message, {
@@ -85,9 +123,183 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       SnackBar(
         content: Text(message),
         backgroundColor: backgroundColor,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+        margin: const EdgeInsets.all(14),
       ),
     );
   }
+
+  InputDecoration _inputDecoration({
+    required String label,
+    String? hint,
+    IconData? icon,
+    bool alignLabelWithHint = false,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      prefixIcon: icon == null
+          ? null
+          : Icon(icon, color: muted, size: 21),
+      alignLabelWithHint: alignLabelWithHint,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 16,
+        vertical: 16,
+      ),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: borderColor),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: borderColor),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: teal, width: 1.6),
+      ),
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Colors.redAccent),
+      ),
+      focusedErrorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Colors.redAccent, width: 1.5),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String title, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 24, bottom: 12),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: teal.withValues(alpha: 0.11),
+              borderRadius: BorderRadius.circular(11),
+            ),
+            child: Icon(icon, color: teal, size: 20),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(
+                color: navy,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionCard({
+    required Widget child,
+    EdgeInsets padding = const EdgeInsets.all(16),
+    EdgeInsets margin = EdgeInsets.zero,
+  }) {
+    return Container(
+      width: double.infinity,
+      margin: margin,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: navy.withValues(alpha: 0.035),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _primaryButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+    bool loading = false,
+    Color color = navy,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: loading
+            ? const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: Colors.white,
+          ),
+        )
+            : Icon(icon, size: 20),
+        label: Text(
+          loading ? 'Please wait...' : label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w800,
+            fontSize: 14,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          disabledBackgroundColor: color.withValues(alpha: 0.55),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _outlinedButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 49,
+      child: OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon, size: 19),
+        label: Text(
+          label,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: navy,
+          side: const BorderSide(color: borderColor),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // PHOTO SELECTION
+  // ============================================================
 
   Future<void> _pickPhotos() async {
     if (_saving || _scheduling) return;
@@ -195,6 +407,10 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
     debugPrint('========== PHOTO UPLOAD COMPLETED ==========');
   }
 
+  // ============================================================
+  // TECHNICIAN ASSIGNMENT
+  // ============================================================
+
   Future<void> _assignTechnician() async {
     if (_assignedTo == widget.ticket.assignedTo) return;
 
@@ -255,6 +471,10 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
 
     debugPrint('========== ASSIGNMENT API SUCCESS ==========');
   }
+
+  // ============================================================
+  // SAVE WORK
+  // ============================================================
 
   Future<void> _saveWork() async {
     if (_saving || _scheduling) return;
@@ -337,6 +557,10 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       ..photoPaths = List<String>.from(_photoPaths);
   }
 
+  // ============================================================
+  // SCHEDULE VISIT
+  // ============================================================
+
   Future<void> _scheduleVisit() async {
     if (!isAdmin || _saving || _scheduling) return;
 
@@ -418,7 +642,9 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
 
       widget.ticket.scheduledVisit = formattedDateTime;
       _applyCurrentFields();
+
       debugPrint('========== SCHEDULE VISIT API SUCCESS ==========');
+
       widget.onSave(widget.ticket);
     } catch (e) {
       debugPrint('SCHEDULE VISIT API ERROR: $e');
@@ -434,6 +660,10 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
     }
   }
 
+  // ============================================================
+  // START VISIT
+  // ============================================================
+
   Future<void> _startVisit() async {
     if (isAdmin || _saving || _scheduling) return;
 
@@ -441,7 +671,9 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
         widget.ticket.status == 'Cancelled') {
       return;
     }
+
     setState(() => _saving = true);
+
     try {
       final currentTechnicianId = await AuthService.getUserId();
 
@@ -512,12 +744,14 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
             ticketData?['visit_started_at']?.toString() ??
                 DateTime.now().toString()
         ..status = ticketData?['status']?.toString() ?? 'In Progress';
+
       _status = widget.ticket.status;
 
       debugPrint('========== START VISIT API SUCCESS ==========');
       debugPrint('Updated Status: ${widget.ticket.status}');
       debugPrint('Visit Started At: ${widget.ticket.visitStartedAt}');
-      await _getTechnicianCurrentLocation();
+
+      await _startTechnicianLiveTracking();
 
       widget.onSave(widget.ticket);
     } catch (e) {
@@ -530,6 +764,10 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       }
     }
   }
+
+  // ============================================================
+  // COMPLETE VISIT
+  // ============================================================
 
   Future<void> _completeVisit() async {
     if (isAdmin || _saving || _scheduling || _completeDialogOpen) {
@@ -589,6 +827,7 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
         _showMessage('Start the visit before completing it.');
         return;
       }
+
       setState(() {
         _completeDialogOpen = false;
         _saving = true;
@@ -602,8 +841,11 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       debugPrint('COMPLETE VISIT: Starting photo upload');
 
       await _uploadPendingPhotos();
+
       if (!mounted) return;
+
       debugPrint('COMPLETE VISIT: Photo upload completed');
+
       final response = await ApiService.post(
         'tickets/${widget.ticket.backendId}/visit/complete',
         body: {
@@ -611,14 +853,19 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
           'resolution': resolution,
         },
       );
+
       debugPrint('COMPLETE VISIT API RESPONSE: $response');
+
       if (response['success'] != true) {
         throw Exception(
           response['message'] ?? 'Unable to complete service visit.',
         );
       }
+
       if (!mounted) return;
+
       final ticketData = response['data']?['ticket'];
+
       widget.ticket
         ..notes = _notesController.text.trim()
         ..resolution =
@@ -640,6 +887,7 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       widget.onSave(widget.ticket);
     } catch (e) {
       debugPrint('COMPLETE VISIT API ERROR: $e');
+
       _showMessage('Unable to complete visit: $e');
     } finally {
       if (mounted) {
@@ -651,39 +899,54 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
     }
   }
 
+  // ============================================================
+  // STATUS COLORS
+  // ============================================================
+
   Color _statusColor(String status) {
     switch (status.toLowerCase()) {
       case 'resolved':
-        return Colors.green;
+        return const Color(0xFF20A46B);
       case 'in progress':
-        return Colors.orange;
+        return const Color(0xFFE99A36);
       case 'assigned':
-        return Colors.blue;
+        return const Color(0xFF3976C8);
       case 'open':
-        return Colors.red;
+        return const Color(0xFFE05252);
       default:
-        return Colors.blueGrey;
+        return const Color(0xFF718096);
     }
   }
 
-  Widget _sectionTitle(String title, IconData icon) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 22, bottom: 10),
-      child: Row(
-        children: [
-          Icon(icon, color: const Color(0xFF176B60)),
-          const SizedBox(width: 10),
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 17,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
+  Widget _badge(String text) {
+    final color = _statusColor(text);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(
+          color: color.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w800,
+          fontSize: 12,
+        ),
       ),
     );
   }
+
+  // ============================================================
+  // READ ONLY FIELD
+  // ============================================================
 
   Widget _readOnlyField(
       String label,
@@ -691,16 +954,25 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
       IconData icon,
       ) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(12),
+        color: background,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: borderColor),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: Colors.blueGrey, size: 21),
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: teal.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: teal, size: 19),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -708,17 +980,20 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
               children: [
                 Text(
                   label,
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                    fontSize: 12,
+                  style: const TextStyle(
+                    color: muted,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 5),
                 Text(
                   value.isEmpty ? 'Not provided' : value,
                   style: const TextStyle(
+                    color: textColor,
                     fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
+                    height: 1.35,
                   ),
                 ),
               ],
@@ -729,247 +1004,472 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
     );
   }
 
+  // ============================================================
+  // SERVICE VISIT SECTION
+  // ============================================================
+
   Widget _serviceVisitSection() {
     final ticket = widget.ticket;
     final isResolved = ticket.status == 'Resolved';
     final hasStarted = ticket.visitStartedAt.isNotEmpty;
 
-    return Card(
-      margin: const EdgeInsets.only(top: 22),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: Colors.grey.shade300),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(
-                  Icons.calendar_month_outlined,
-                  color: Color(0xFF176B60),
+    return _sectionCard(
+      margin: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.calendar_month_rounded, color: teal),
+              SizedBox(width: 10),
+              Text(
+                'Service Visit',
+                style: TextStyle(
+                  color: navy,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
                 ),
-                SizedBox(width: 10),
-                Text(
-                  'Service Visit',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _readOnlyField(
+            'Scheduled Visit',
+            ticket.scheduledVisit,
+            Icons.event_outlined,
+          ),
+          if (ticket.visitStartedAt.isNotEmpty)
             _readOnlyField(
-              'Scheduled Visit',
-              ticket.scheduledVisit,
-              Icons.event_outlined,
+              'Visit Started',
+              ticket.visitStartedAt,
+              Icons.play_circle_outline,
             ),
-            if (ticket.visitStartedAt.isNotEmpty)
-              _readOnlyField(
-                'Visit Started',
-                ticket.visitStartedAt,
-                Icons.play_circle_outline,
+          if (ticket.visitCompletedAt.isNotEmpty)
+            _readOnlyField(
+              'Visit Completed',
+              ticket.visitCompletedAt,
+              Icons.task_alt,
+            ),
+          if (isAdmin && !isResolved)
+            _outlinedButton(
+              label: ticket.scheduledVisit.isEmpty
+                  ? 'Schedule Visit'
+                  : 'Reschedule Visit',
+              icon: Icons.calendar_month_rounded,
+              onPressed: (_saving || _scheduling) ? null : _scheduleVisit,
+            ),
+          if (!isAdmin && !isResolved && !hasStarted)
+            _primaryButton(
+              label: 'Start Visit',
+              icon: Icons.play_arrow_rounded,
+              onPressed: _saving ? null : _startVisit,
+              loading: _saving,
+              color: teal,
+            ),
+          if (!isAdmin && !isResolved && hasStarted)
+            _primaryButton(
+              label: 'Complete Visit',
+              icon: Icons.check_circle_outline_rounded,
+              onPressed: (_saving || _completeDialogOpen)
+                  ? null
+                  : _completeVisit,
+              loading: _saving,
+              color: teal,
+            ),
+          if (isResolved)
+            Container(
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF8F0),
+                borderRadius: BorderRadius.circular(12),
               ),
-            if (ticket.visitCompletedAt.isNotEmpty)
-              _readOnlyField(
-                'Visit Completed',
-                ticket.visitCompletedAt,
-                Icons.task_alt,
-              ),
-            if (isAdmin && !isResolved)
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: (_saving || _scheduling)
-                      ? null
-                      : _scheduleVisit,
-                  icon: const Icon(Icons.calendar_month),
-                  label: Text(
-                    ticket.scheduledVisit.isEmpty
-                        ? 'Schedule Visit'
-                        : 'Reschedule Visit',
+              child: const Row(
+                children: [
+                  Icon(Icons.check_circle, color: Color(0xFF20A46B)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Service visit completed',
+                      style: TextStyle(
+                        color: Color(0xFF187A4B),
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
-            if (!isAdmin && !isResolved && !hasStarted)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _saving ? null : _startVisit,
-                  icon: const Icon(Icons.play_arrow),
-                  label: const Text('Start Visit'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF176B60),
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ),
-            if (!isAdmin && !isResolved && hasStarted)
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: (_saving || _completeDialogOpen)
-                      ? null
-                      : _completeVisit,
-                  icon: const Icon(Icons.check_circle_outline),
-                  label: const Text('Complete Visit'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF176B60),
-                    foregroundColor: Colors.white,
-                  ),
-                ),
-              ),
-            if (isResolved)
-              const ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: Icon(Icons.check_circle, color: Colors.green),
-                title: Text('Service visit completed'),
-                subtitle: Text('This ticket is marked as resolved.'),
-              ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }
 
 
+
+  Widget _liveDistanceCard() {
+    final distance = _remainingDistanceKm;
+    final duration = _remainingDurationMinutes;
+
+    if (distance == null || duration == null) {
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 14),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF4F7FB),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: borderColor),
+        ),
+        child: const Row(
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: teal,
+              ),
+            ),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Calculating route distance and arrival time...',
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final distanceText = distance < 1
+        ? '${(distance * 1000).round()} m'
+        : '${distance.toStringAsFixed(1)} km';
+
+    final minutes = duration.ceil();
+
+    final timeText = minutes < 1
+        ? 'Less than 1 min'
+        : '$minutes min';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.all(17),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF10213D),
+            Color(0xFF1B4560),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(17),
+        boxShadow: [
+          BoxShadow(
+            color: navy.withValues(alpha: 0.12),
+            blurRadius: 12,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: teal.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(13),
+            ),
+            child: const Icon(
+              Icons.navigation_rounded,
+              color: teal,
+              size: 24,
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Technician is on the way',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  'Distance remaining: $distanceText',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.78),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: 13,
+              vertical: 11,
+            ),
+            decoration: BoxDecoration(
+              color: teal,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  timeText,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const Text(
+                  'ETA',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // CUSTOMER LOCATION MAP
+  // ============================================================
 
   Widget _customerLocationMap() {
     final latitude = widget.ticket.latitude;
     final longitude = widget.ticket.longitude;
+
     debugPrint(
       'MAPTILER KEY LOADED: '
           '${dotenv.env['MAPTILER_API_KEY']?.isNotEmpty == true}',
     );
-    // Check whether customer coordinates are available.
-    final hasValidLocation =
-        latitude != null &&
-            longitude != null &&
-            latitude.isFinite &&
-            longitude.isFinite &&
-            latitude >= -90 &&
-            latitude <= 90 &&
-            longitude >= -180 &&
-            longitude <= 180;
 
-    return Card(
-      margin: const EdgeInsets.only(top: 22),
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(color: Colors.grey.shade300),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Row(
-              children: [
-                Icon(
-                  Icons.location_on,
-                  color: Color(0xFF176B60),
-                ),
-                SizedBox(width: 10),
-                Text(
-                  'Customer Location',
+    final hasValidLocation = latitude != null &&
+        longitude != null &&
+        latitude.isFinite &&
+        longitude.isFinite &&
+        latitude >= -90 &&
+        latitude <= 90 &&
+        longitude >= -180 &&
+        longitude <= 180;
+
+    final technicianPosition = _technicianPosition;
+
+    final customerPoint = hasValidLocation
+        ? LatLng(latitude!, longitude!)
+        : null;
+
+    final technicianPoint = technicianPosition != null
+        ? LatLng(
+      technicianPosition.latitude,
+      technicianPosition.longitude,
+    )
+        : null;
+
+    final mapCenter = customerPoint != null && technicianPoint != null
+        ? LatLng(
+      (customerPoint.latitude + technicianPoint.latitude) / 2,
+      (customerPoint.longitude + technicianPoint.longitude) / 2,
+    )
+        : customerPoint ??
+        technicianPoint ??
+        const LatLng(18.5204, 73.8567);
+
+    return _sectionCard(
+      margin: const EdgeInsets.only(top: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.location_on_rounded, color: teal),
+              SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  'Customer & Technician Location',
                   style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
+                    color: navy,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
                   ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                 ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            if (!hasValidLocation)
-              Container(
-                height: 120,
+              ),
+            ],
+          ),
+          const SizedBox(height: 15),
+          if (!hasValidLocation)
+            Container(
+              height: 150,
+              width: double.infinity,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: background,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: borderColor),
+              ),
+              child: const Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.location_off_outlined,
+                    size: 36,
+                    color: muted,
+                  ),
+                  SizedBox(height: 9),
+                  Text(
+                    'Customer location not available',
+                    style: TextStyle(
+                      color: muted,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: SizedBox(
+                height: 280,
                 width: double.infinity,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                child: FlutterMap(
+                  key: ValueKey(technicianPoint != null),
+                  options: MapOptions(
+                    initialCenter: mapCenter,
+                    initialZoom: technicianPoint != null ? 11 : 15,
+                  ),
                   children: [
-                    Icon(
-                      Icons.location_off_outlined,
-                      size: 35,
-                      color: Colors.grey,
+                    TileLayer(
+                      urlTemplate:
+                      'https://api.maptiler.com/maps/streets-v4/256/{z}/{x}/{y}.png?key={key}',
+                      additionalOptions: {
+                        'key': dotenv.env['MAPTILER_API_KEY'] ?? '',
+                      },
+                      userAgentPackageName:
+                      'com.example.securis_service_app',
                     ),
-                    SizedBox(height: 8),
-                    Text(
-                      'Customer location not available',
-                      style: TextStyle(color: Colors.grey),
-                    ),
-                  ],
-                ),
-              )
-            else
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  height: 230,
-                  width: double.infinity,
-                  child: FlutterMap(
-                    options: MapOptions(
-                      initialCenter: LatLng(
-                        latitude,
-                        longitude,
-                      ),
-                      initialZoom: 15,
-                    ),
-                    children: [
-
-                      TileLayer(
-                        urlTemplate:
-                        'https://api.maptiler.com/maps/streets-v4/256/{z}/{x}/{y}.png?key={key}',
-                        additionalOptions: {
-                          'key': dotenv.env['MAPTILER_API_KEY'] ?? '',
-                        },
-                        userAgentPackageName: 'com.example.securis_service_app',
-                      ),
-                      MarkerLayer(
-                        markers: [
-                          Marker(
-                            point: LatLng(
-                              latitude,
-                              longitude,
-                            ),
-                            width: 45,
-                            height: 45,
-                            child: const Icon(
-                              Icons.location_pin,
-                              color: Colors.red,
-                              size: 42,
-                            ),
+                    if (_routePoints.length > 1)
+                      PolylineLayer(
+                        polylines: [
+                          Polyline(
+                            points: _routePoints,
+                            color: teal,
+                            strokeWidth: 5,
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: customerPoint!,
+                          width: 45,
+                          height: 45,
+                          child: const Icon(
+                            Icons.location_pin,
+                            color: Colors.red,
+                            size: 42,
+                          ),
+                        ),
+                        if (technicianPoint != null)
+                          Marker(
+                            point: technicianPoint,
+                            width: 45,
+                            height: 45,
+                            child: const Icon(
+                              Icons.person_pin_circle,
+                              color: Colors.blue,
+                              size: 42,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
-
-            const SizedBox(height: 8),
-            const Text(
-              '© OpenStreetMap contributors',
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.grey,
-              ),
             ),
-          ],
-        ),
+          // Show Distance and ETA only on Technician App
+          // Customer location and Technician GPS must be available.
+          if (!isAdmin &&
+              hasValidLocation &&
+              technicianPoint != null)
+            _liveDistanceCard(),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 18,
+            runSpacing: 9,
+            children: [
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.location_pin, color: Colors.red, size: 20),
+                  SizedBox(width: 5),
+                  Text(
+                    'Customer',
+                    style: TextStyle(
+                      color: textColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+              if (technicianPoint != null)
+                const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.person_pin_circle,
+                      color: Colors.blue,
+                      size: 20,
+                    ),
+                    SizedBox(width: 5),
+                    Text(
+                      'Technician',
+                      style: TextStyle(
+                        color: textColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            '© MapTiler © OpenStreetMap contributors',
+            style: TextStyle(fontSize: 11, color: muted),
+          ),
+        ],
       ),
     );
   }
+
+  // ============================================================
+  // GET TECHNICIAN LOCATION
+  // ============================================================
 
   Future<void> _getTechnicianCurrentLocation() async {
     try {
@@ -979,7 +1479,6 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
         _locationLoading = true;
       });
 
-      // Check whether phone GPS is enabled
       bool serviceEnabled =
       await Geolocator.isLocationServiceEnabled();
 
@@ -996,7 +1495,6 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
         return;
       }
 
-      // Check location permission
       LocationPermission permission =
       await Geolocator.checkPermission();
 
@@ -1034,7 +1532,6 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
         return;
       }
 
-      // Get current GPS location
       Position position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
@@ -1048,6 +1545,10 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
 
       setState(() {
         _technicianPosition = position;
+        debugPrint(
+          'TECHNICIAN POSITION UPDATED: '
+              '${position.latitude}, ${position.longitude}',
+        );
       });
     } catch (e) {
       debugPrint('TECHNICIAN LOCATION ERROR: $e');
@@ -1069,376 +1570,664 @@ class _TicketDetailsScreenState extends State<TicketDetailsScreen> {
   }
 
 
+  Future<void> _saveTechnicianLocation(Position position) async {
+    try {
+      final response = await ApiService.post(
+        'technician-location/update',
+        body: {
+          'ticket_id': widget.ticket.backendId,
+          'latitude': position.latitude,
+          'longitude': position.longitude,
+          'accuracy': position.accuracy,
+        },
+      );
 
+      debugPrint('LOCATION SAVED TO DATABASE: $response');
+    } catch (e) {
+      debugPrint('LOCATION API ERROR: $e');
+    }
+  }
 
+  // ============================================================
+  // LIVE TECHNICIAN TRACKING
+  // ============================================================
 
+  Future<void> _startTechnicianLiveTracking() async {
+    try {
+      if (!mounted) return;
+
+      debugPrint('========== LIVE GPS START ==========');
+
+      final serviceEnabled =
+      await Geolocator.isLocationServiceEnabled();
+
+      if (!serviceEnabled) {
+        debugPrint('GPS SERVICE DISABLED');
+        _showMessage('Please enable GPS on your phone.');
+        return;
+      }
+
+      LocationPermission permission =
+      await Geolocator.checkPermission();
+
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        debugPrint('LOCATION PERMISSION DENIED');
+        _showMessage('Location permission is required.');
+        return;
+      }
+
+      await _positionSubscription?.cancel();
+
+      const LocationSettings settings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      );
+
+      _positionSubscription = Geolocator.getPositionStream(
+        locationSettings: settings,
+      ).listen(
+            (Position position) {
+          if (!mounted) return;
+
+          debugPrint(
+            'LIVE TECHNICIAN LOCATION: '
+                '${position.latitude}, ${position.longitude}',
+          );
+
+          setState(() {
+            _technicianPosition = position;
+
+          });
+          _saveTechnicianLocation(position);
+          _loadTechnicianRoute(
+            LatLng(position.latitude, position.longitude),
+          );
+        },
+        onError: (error) {
+          debugPrint('LIVE GPS STREAM ERROR: $error');
+        },
+      );
+
+      debugPrint('TECHNICIAN LIVE TRACKING STARTED');
+    } catch (e) {
+      debugPrint('LIVE TRACKING FAILED: $e');
+
+      _showMessage('Unable to start live tracking: $e');
+    }
+  }
+
+  // ============================================================
+  // ROAD ROUTE
+  // ============================================================
+
+  Future<void> _loadTechnicianRoute(LatLng technicianPoint) async {
+    final latitude = widget.ticket.latitude;
+    final longitude = widget.ticket.longitude;
+
+    if (latitude == null || longitude == null) {
+      debugPrint('ROUTE ERROR: Customer location not available.');
+      return;
+    }
+
+    if (!latitude.isFinite ||
+        !longitude.isFinite ||
+        latitude < -90 ||
+        latitude > 90 ||
+        longitude < -180 ||
+        longitude > 180) {
+      debugPrint('ROUTE ERROR: Invalid customer coordinates.');
+      return;
+    }
+    if (_routeLoading) {
+      _pendingRoutePoint = technicianPoint;
+      debugPrint('ROUTE: Latest location queued.');
+      return;
+    }
+
+    _routeLoading = true;
+
+    LatLng? currentPoint = technicianPoint;
+
+    try {
+      while (currentPoint != null && mounted) {
+        _pendingRoutePoint = null;
+
+        debugPrint('========== ROAD ROUTE API START ==========');
+        debugPrint(
+          'TECHNICIAN: ${currentPoint.latitude}, ${currentPoint.longitude}',
+        );
+        debugPrint('CUSTOMER: $latitude, $longitude');
+
+        final url = Uri.parse(
+          'https://router.project-osrm.org/route/v1/driving/'
+              '${currentPoint.longitude},${currentPoint.latitude};'
+              '$longitude,$latitude'
+              '?overview=full&geometries=geojson',
+        );
+
+        final response = await http.get(url).timeout(
+          const Duration(seconds: 20),
+        );
+
+        debugPrint('ROUTE API STATUS: ${response.statusCode}');
+
+        if (response.statusCode != 200) {
+          throw Exception('Route API failed: ${response.statusCode}');
+        }
+
+        final responseData = jsonDecode(response.body);
+
+        if (responseData['code'] != 'Ok') {
+          throw Exception('No road route found.');
+        }
+
+        final routes = responseData['routes'];
+
+        if (routes == null || routes.isEmpty) {
+          throw Exception('Route data is empty.');
+        }
+
+        final route = routes[0];
+
+        // OSRM distance meters
+        final distanceMeters = (route['distance'] as num).toDouble();
+
+        // OSRM duration seconds
+        final durationSeconds = (route['duration'] as num).toDouble();
+
+        final distanceKm = distanceMeters / 1000;
+        final durationMinutes = durationSeconds / 60;
+
+        final coordinates =
+        route['geometry']['coordinates'] as List;
+
+        final points = coordinates.map<LatLng>((coordinate) {
+          return LatLng(
+            (coordinate[1] as num).toDouble(),
+            (coordinate[0] as num).toDouble(),
+          );
+        }).toList();
+
+        if (!mounted) return;
+
+        setState(() {
+          _routePoints = points;
+          _remainingDistanceKm = distanceKm;
+          _remainingDurationMinutes = durationMinutes;
+        });
+
+        debugPrint('========== ROAD ROUTE SUCCESS ==========');
+        debugPrint('REMAINING DISTANCE: ${distanceKm.toStringAsFixed(2)} KM');
+        debugPrint(
+          'ESTIMATED TIME: ${durationMinutes.toStringAsFixed(1)} MINUTES',
+        );
+        debugPrint('ROUTE POINTS: ${points.length}');
+        currentPoint = _pendingRoutePoint;
+      }
+    } catch (e) {
+      debugPrint('ROAD ROUTE ERROR: $e');
+    } finally {
+      _routeLoading = false;
+      final pendingPoint = _pendingRoutePoint;
+      _pendingRoutePoint = null;
+
+      if (mounted && pendingPoint != null) {
+        _loadTechnicianRoute(pendingPoint);
+      }
+    }
+  }
+
+  // ============================================================
+  // BUILD SCREEN
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
     final ticket = widget.ticket;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(ticket.id),
-        backgroundColor: const Color(0xFF176B60),
-        foregroundColor: Colors.white,
-      ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(18),
-          children: [
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [
-                    Color(0xFF176B60),
-                    Color(0xFF269688),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'REPAIR REQUEST',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                      letterSpacing: 1.2,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    ticket.issue,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 21,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _badge(ticket.priority),
-                      _badge(_status),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-
-            _sectionTitle('Customer Details', Icons.person_outline),
-            _readOnlyField('Customer', ticket.customer, Icons.person),
-            _readOnlyField(
-              'Property',
-              ticket.property,
-              Icons.location_on_outlined,
-            ),
-            _readOnlyField(
-              'Created',
-              ticket.created,
-              Icons.calendar_today_outlined,
-            ),
-            _readOnlyField(
-              'Problem Description',
-              ticket.description,
-              Icons.description_outlined,
-            ),
-            _customerLocationMap(),
-            _sectionTitle(
-              'Assignment',
-              Icons.assignment_ind_outlined,
-            ),
-
-            if (isAdmin)
-              DropdownButtonFormField<String>(
-                value: widget.technicianNames.contains(_assignedTo)
-                    ? _assignedTo
-                    : 'Unassigned',
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Assign Technician',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  'Unassigned',
-                  ...widget.technicianNames.where(
-                        (name) => name != 'Unassigned',
-                  ),
-                ].map((name) {
-                  return DropdownMenuItem<String>(
-                    value: name,
-                    child: Text(name),
-                  );
-                }).toList(),
-                onChanged:
-                (_saving ||
-                    widget.ticket.status == 'In Progress' ||
-                    widget.ticket.status == 'Resolved')
-                    ? null
-                    : (value) {
-                  if (value == null) return;
-
-                  if (value == 'Unassigned' &&
-                      widget.ticket.assignedTo != 'Unassigned' &&
-                      widget.ticket.assignedTo.isNotEmpty) {
-                    _showMessage(
-                      'Unassign is not supported by the current backend API.',
-                      backgroundColor: Colors.orange,
-                    );
-                    return;
-                  }
-                  setState(() {
-                    _assignedTo = value;
-                    if (value != 'Unassigned' &&
-                        _status == 'Open') {
-                      _status = 'Assigned';
-                    } else if (value == 'Unassigned' &&
-                        _status == 'Assigned') {
-                      _status = 'Open';
-                    }
-                  });
-                },
-              )
-            else
-              _readOnlyField(
-                'Assigned Technician',
-                ticket.assignedTo,
-                Icons.engineering_outlined,
-              ),
-            _serviceVisitSection(),
-            _sectionTitle('Work Status', Icons.track_changes),
-
-            if (isAdmin &&
-                (widget.ticket.status == 'Open' ||
-                    widget.ticket.status == 'Assigned'))
-              DropdownButtonFormField<String>(
-                value: _status == 'Assigned' ? 'Assigned' : 'Open',
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Update Status',
-                  border: OutlineInputBorder(),
-                ),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'Open',
-                    child: Text('Open'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'Assigned',
-                    child: Text('Assigned'),
-                  ),
-                ],
-                onChanged: _saving
-                    ? null
-                    : (value) {
-                  if (value == null) return;
-
-                  if (value == 'Assigned' &&
-                      (_assignedTo == 'Unassigned' ||
-                          _assignedTo.isEmpty)) {
-                    _showMessage(
-                      'Assign a technician before setting status to Assigned.',
-                      backgroundColor: Colors.orange,
-                    );
-                    return;
-                  }
-                  if (value == 'Open' &&
-                      _assignedTo != 'Unassigned' &&
-                      _assignedTo.isNotEmpty) {
-                    _showMessage(
-                      'Unassign is not supported by the current backend API.',
-                      backgroundColor: Colors.orange,
-                    );
-                    return;
-                  }
-
-                  setState(() {
-                    _status = value;
-                  });
-                },
-              )
-            else
-              _readOnlyField(
-                'Current Status',
-                _status,
-                Icons.track_changes,
-              ),
-            _sectionTitle('Visit Notes', Icons.edit_note),
-            TextFormField(
-              controller: _notesController,
-              maxLines: 4,
-              enabled: !_saving,
-              decoration: InputDecoration(
-                hintText:
-                'Enter inspection details, work performed, or observations...',
-                alignLabelWithHint: true,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-
-            _sectionTitle(
-              'Work Photos',
-              Icons.photo_library_outlined,
-            ),
-            OutlinedButton.icon(
-              onPressed: (_saving || _scheduling)
-                  ? null
-                  : _pickPhotos,
-              icon: const Icon(Icons.add_a_photo_outlined),
-              label: const Text('Select Photos'),
-            ),
-
-            if (_photoPaths.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _photoPaths.length,
-                gridDelegate:
-                const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
-                ),
-                itemBuilder: (context, index) {
-                  final path = _photoPaths[index];
-                  final isRemote = path.startsWith('http://') ||
-                      path.startsWith('https://');
-
-                  return Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: isRemote
-                            ? Image.network(
-                          path,
-                          fit: BoxFit.cover,
-                          errorBuilder:
-                              (context, error, stackTrace) {
-                            return Container(
-                              color: Colors.grey.shade200,
-                              child: const Icon(
-                                Icons.broken_image,
-                              ),
-                            );
-                          },
-                        )
-                            : Image.file(
-                          File(path),
-                          fit: BoxFit.cover,
-                          errorBuilder:
-                              (context, error, stackTrace) {
-                            return Container(
-                              color: Colors.grey.shade200,
-                              child: const Icon(
-                                Icons.broken_image,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      Positioned(
-                        top: 3,
-                        right: 3,
-                        child: IconButton(
-                          onPressed: _saving
-                              ? null
-                              : () => _removePhoto(index),
-                          icon: const Icon(
-                            Icons.close,
-                            color: Colors.white,
-                          ),
-                          style: IconButton.styleFrom(
-                            backgroundColor: Colors.black54,
-                          ),
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ],
-
-            _sectionTitle('Resolution', Icons.task_alt),
-            TextFormField(
-              controller: _resolutionController,
-              maxLines: 4,
-              enabled: !_saving,
-              decoration: InputDecoration(
-                hintText: 'Explain how the issue was fixed...',
-                alignLabelWithHint: true,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              validator: (value) {
-                if (_status == 'Resolved' &&
-                    (value == null || value.trim().isEmpty)) {
-                  return 'Resolution is required to resolve the ticket';
-                }
-                return null;
-              },
-            ),
-
-            const SizedBox(height: 26),
-
-            SizedBox(
-              height: 52,
-              child: ElevatedButton.icon(
-                onPressed: _saving ? null : _saveWork,
-                icon: const Icon(Icons.save_outlined),
-                label: Text(
-                  _saving ? 'Saving...' : 'Save Work Details',
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF176B60),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 24),
-          ],
+    return Theme(
+      data: Theme.of(context).copyWith(
+        scaffoldBackgroundColor: background,
+        colorScheme: Theme.of(context).colorScheme.copyWith(
+          primary: teal,
+          secondary: teal,
+          surface: Colors.white,
         ),
       ),
-    );
-  }
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: navy,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          toolbarHeight: 68,
+          titleSpacing: 18,
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Ticket Details',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                ticket.id,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.white.withValues(alpha: 0.72),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        body: Form(
+          key: _formKey,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
+            children: [
+              // Ticket header
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [navyDark, navy, Color(0xFF24516D)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: navy.withValues(alpha: 0.16),
+                      blurRadius: 18,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Text(
+                            'REPAIR REQUEST',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              letterSpacing: 1.3,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        const Spacer(),
+                        Icon(
+                          Icons.build_circle_outlined,
+                          color: Colors.white.withValues(alpha: 0.75),
+                          size: 25,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 15),
+                    Text(
+                      ticket.issue,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 21,
+                        height: 1.3,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _badge(ticket.priority),
+                        _badge(_status),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
 
-  Widget _badge(String text) {
-    final color = _statusColor(text);
+              // Customer details
+              _sectionTitle('Customer Details', Icons.person_outline_rounded),
+              _sectionCard(
+                child: Column(
+                  children: [
+                    _readOnlyField(
+                      'Customer',
+                      ticket.customer,
+                      Icons.person_outline,
+                    ),
+                    _readOnlyField(
+                      'Property',
+                      ticket.property,
+                      Icons.location_on_outlined,
+                    ),
+                    _readOnlyField(
+                      'Created',
+                      ticket.created,
+                      Icons.calendar_today_outlined,
+                    ),
+                    _readOnlyField(
+                      'Problem Description',
+                      ticket.description,
+                      Icons.description_outlined,
+                    ),
+                  ],
+                ),
+              ),
 
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 7,
-      ),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(30),
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(
-          color: Colors.white,
-          fontWeight: FontWeight.w600,
-          fontSize: 12,
+              _customerLocationMap(),
+
+              // Assignment
+              _sectionTitle(
+                'Assignment',
+                Icons.assignment_ind_outlined,
+              ),
+              _sectionCard(
+                child: isAdmin
+                    ? DropdownButtonFormField<String>(
+                  value: widget.technicianNames.contains(_assignedTo)
+                      ? _assignedTo
+                      : 'Unassigned',
+                  isExpanded: true,
+                  decoration: _inputDecoration(
+                    label: 'Assign Technician',
+                    icon: Icons.engineering_outlined,
+                  ),
+                  items: [
+                    'Unassigned',
+                    ...widget.technicianNames.where(
+                          (name) => name != 'Unassigned',
+                    ),
+                  ].map((name) {
+                    return DropdownMenuItem<String>(
+                      value: name,
+                      child: Text(
+                        name,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (_saving ||
+                      widget.ticket.status == 'In Progress' ||
+                      widget.ticket.status == 'Resolved')
+                      ? null
+                      : (value) {
+                    if (value == null) return;
+
+                    if (value == 'Unassigned' &&
+                        widget.ticket.assignedTo !=
+                            'Unassigned' &&
+                        widget.ticket.assignedTo.isNotEmpty) {
+                      _showMessage(
+                        'Unassign is not supported by the current backend API.',
+                        backgroundColor: Colors.orange,
+                      );
+                      return;
+                    }
+
+                    setState(() {
+                      _assignedTo = value;
+
+                      if (value != 'Unassigned' &&
+                          _status == 'Open') {
+                        _status = 'Assigned';
+                      } else if (value == 'Unassigned' &&
+                          _status == 'Assigned') {
+                        _status = 'Open';
+                      }
+                    });
+                  },
+                )
+                    : _readOnlyField(
+                  'Assigned Technician',
+                  ticket.assignedTo,
+                  Icons.engineering_outlined,
+                ),
+              ),
+
+              // Service visit
+              _sectionTitle(
+                'Service Visit',
+                Icons.calendar_month_outlined,
+              ),
+              _serviceVisitSection(),
+
+              // Work status
+              _sectionTitle(
+                'Work Status',
+                Icons.track_changes_rounded,
+              ),
+              _sectionCard(
+                child: isAdmin &&
+                    (widget.ticket.status == 'Open' ||
+                        widget.ticket.status == 'Assigned')
+                    ? DropdownButtonFormField<String>(
+                  value: _status == 'Assigned' ? 'Assigned' : 'Open',
+                  isExpanded: true,
+                  decoration: _inputDecoration(
+                    label: 'Update Status',
+                    icon: Icons.flag_outlined,
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'Open',
+                      child: Text('Open'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'Assigned',
+                      child: Text('Assigned'),
+                    ),
+                  ],
+                  onChanged: _saving
+                      ? null
+                      : (value) {
+                    if (value == null) return;
+
+                    if (value == 'Assigned' &&
+                        (_assignedTo == 'Unassigned' ||
+                            _assignedTo.isEmpty)) {
+                      _showMessage(
+                        'Assign a technician before setting status to Assigned.',
+                        backgroundColor: Colors.orange,
+                      );
+                      return;
+                    }
+
+                    if (value == 'Open' &&
+                        _assignedTo != 'Unassigned' &&
+                        _assignedTo.isNotEmpty) {
+                      _showMessage(
+                        'Unassign is not supported by the current backend API.',
+                        backgroundColor: Colors.orange,
+                      );
+                      return;
+                    }
+
+                    setState(() {
+                      _status = value;
+                    });
+                  },
+                )
+                    : _readOnlyField(
+                  'Current Status',
+                  _status,
+                  Icons.track_changes,
+                ),
+              ),
+
+              // Work notes
+              _sectionTitle('Visit Notes', Icons.edit_note_rounded),
+              TextFormField(
+                controller: _notesController,
+                maxLines: 4,
+                enabled: !_saving,
+                decoration: _inputDecoration(
+                  label: 'Work Notes',
+                  hint:
+                  'Enter inspection details, work performed, or observations...',
+                  icon: Icons.notes_rounded,
+                  alignLabelWithHint: true,
+                ),
+              ),
+
+              // Photos
+              _sectionTitle(
+                'Work Photos',
+                Icons.photo_library_outlined,
+              ),
+              _sectionCard(
+                child: Column(
+                  children: [
+                    _outlinedButton(
+                      label: 'Select Photos',
+                      icon: Icons.add_a_photo_outlined,
+                      onPressed: (_saving || _scheduling)
+                          ? null
+                          : _pickPhotos,
+                    ),
+                    if (_photoPaths.isNotEmpty) ...[
+                      const SizedBox(height: 14),
+                      GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _photoPaths.length,
+                        gridDelegate:
+                        const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 3,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                        ),
+                        itemBuilder: (context, index) {
+                          final path = _photoPaths[index];
+                          final isRemote = path.startsWith('http://') ||
+                              path.startsWith('https://');
+
+                          return Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: isRemote
+                                    ? Image.network(
+                                  path,
+                                  fit: BoxFit.cover,
+                                  errorBuilder:
+                                      (context, error, stackTrace) {
+                                    return Container(
+                                      color: background,
+                                      child: const Icon(
+                                        Icons.broken_image_outlined,
+                                        color: muted,
+                                      ),
+                                    );
+                                  },
+                                )
+                                    : Image.file(
+                                  File(path),
+                                  fit: BoxFit.cover,
+                                  errorBuilder:
+                                      (context, error, stackTrace) {
+                                    return Container(
+                                      color: background,
+                                      child: const Icon(
+                                        Icons.broken_image_outlined,
+                                        color: muted,
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                              Positioned(
+                                top: 3,
+                                right: 3,
+                                child: IconButton(
+                                  onPressed: _saving
+                                      ? null
+                                      : () => _removePhoto(index),
+                                  icon: const Icon(
+                                    Icons.close_rounded,
+                                    color: Colors.white,
+                                    size: 18,
+                                  ),
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: navy.withValues(
+                                      alpha: 0.75,
+                                    ),
+                                    minimumSize: const Size(30, 30),
+                                    maximumSize: const Size(30, 30),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
+              // Resolution
+              _sectionTitle('Resolution', Icons.task_alt_rounded),
+              TextFormField(
+                controller: _resolutionController,
+                maxLines: 4,
+                enabled: !_saving,
+                decoration: _inputDecoration(
+                  label: 'Resolution Details',
+                  hint: 'Explain how the issue was fixed...',
+                  icon: Icons.check_circle_outline,
+                  alignLabelWithHint: true,
+                ),
+                validator: (value) {
+                  if (_status == 'Resolved' &&
+                      (value == null || value.trim().isEmpty)) {
+                    return 'Resolution is required to resolve the ticket';
+                  }
+                  return null;
+                },
+              ),
+
+              const SizedBox(height: 26),
+
+              _primaryButton(
+                label: 'Save Work Details',
+                icon: Icons.save_outlined,
+                onPressed: _saving ? null : _saveWork,
+                loading: _saving,
+              ),
+
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
     );
   }
 }
+
+// ============================================================
+// COMPLETE VISIT DIALOG
+// ============================================================
 
 class _CompleteVisitDialog extends StatefulWidget {
   const _CompleteVisitDialog({
@@ -1453,6 +2242,9 @@ class _CompleteVisitDialog extends StatefulWidget {
 }
 
 class _CompleteVisitDialogState extends State<_CompleteVisitDialog> {
+  static const Color navy = Color(0xFF172B4D);
+  static const Color teal = Color(0xFF16B8A6);
+
   late final TextEditingController _resolutionController;
 
   @override
@@ -1488,26 +2280,80 @@ class _CompleteVisitDialogState extends State<_CompleteVisitDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Complete Service Visit'),
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+      ),
+      title: const Row(
+        children: [
+          Icon(Icons.task_alt_rounded, color: teal),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Complete Service Visit',
+              style: TextStyle(
+                color: navy,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
       content: TextField(
         controller: _resolutionController,
         maxLines: 4,
-        decoration: const InputDecoration(
+        decoration: InputDecoration(
           labelText: 'Resolution details',
           hintText: 'Describe the work completed...',
-          border: OutlineInputBorder(),
+          filled: true,
+          fillColor: const Color(0xFFF4F7FB),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(13),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(13),
+            borderSide: const BorderSide(
+              color: Color(0xFFE7ECF3),
+            ),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(13),
+            borderSide: const BorderSide(
+              color: teal,
+              width: 1.5,
+            ),
+          ),
         ),
       ),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       actions: [
         TextButton(
           onPressed: () {
             Navigator.of(context).pop();
           },
-          child: const Text('Cancel'),
+          child: const Text(
+            'Cancel',
+            style: TextStyle(
+              color: Color(0xFF8491A5),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
         ElevatedButton(
           onPressed: _complete,
-          child: const Text('Complete'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: teal,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(11),
+            ),
+          ),
+          child: const Text(
+            'Complete',
+            style: TextStyle(fontWeight: FontWeight.w800),
+          ),
         ),
       ],
     );

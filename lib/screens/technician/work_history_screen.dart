@@ -13,51 +13,70 @@ class WorkHistoryScreen extends StatelessWidget {
   final List<RepairTicket> tickets;
   final ValueChanged<RepairTicket> onOpenTicket;
 
-  static const Color primaryColor = Color(0xFF2457C5);
+  static const Color navy = Color(0xFF172B4D);
+  static const Color teal = Color(0xFF16B8A6);
+  static const Color background = Color(0xFFF4F7FB);
 
   @override
   Widget build(BuildContext context) {
+    // Existing resolved ticket filter - unchanged.
     final resolvedTickets = tickets
         .where((ticket) => ticket.status == 'Resolved')
         .toList();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FC),
+      backgroundColor: background,
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+        padding: const EdgeInsets.fromLTRB(18, 20, 18, 28),
         children: [
           const Text(
             'Work History',
             style: TextStyle(
-              fontSize: 26,
+              fontSize: 27,
               fontWeight: FontWeight.w800,
-              color: Color(0xFF18233B),
+              color: navy,
+              letterSpacing: -0.5,
             ),
           ),
-          const SizedBox(height: 6),
-          const Text(
+          const SizedBox(height: 7),
+          Text(
             'Review your completed service requests.',
-            style: TextStyle(color: Colors.blueGrey),
+            style: TextStyle(
+              color: Colors.blueGrey.shade500,
+              fontSize: 13,
+              height: 1.5,
+            ),
           ),
-          const SizedBox(height: 22),
+
+          const SizedBox(height: 23),
+
+          // Completed jobs summary
           Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(19),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(18),
+              color: navy,
+              borderRadius: BorderRadius.circular(19),
+              boxShadow: [
+                BoxShadow(
+                  color: navy.withValues(alpha: 0.12),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
             ),
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(14),
+                  height: 55,
+                  width: 55,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFE4F7EC),
-                    borderRadius: BorderRadius.circular(14),
+                    color: teal.withValues(alpha: 0.17),
+                    borderRadius: BorderRadius.circular(16),
                   ),
                   child: const Icon(
                     Icons.task_alt_rounded,
-                    size: 30,
-                    color: Colors.green,
+                    size: 29,
+                    color: Color(0xFF55D8C6),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -68,177 +87,390 @@ class WorkHistoryScreen extends StatelessWidget {
                       Text(
                         '${resolvedTickets.length}',
                         style: const TextStyle(
-                          fontSize: 28,
+                          fontSize: 29,
                           fontWeight: FontWeight.w800,
-                          color: Color(0xFF18233B),
+                          color: Colors.white,
                         ),
                       ),
+                      const SizedBox(height: 3),
                       const Text(
                         'Completed Jobs',
-                        style: TextStyle(color: Colors.blueGrey),
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ],
                   ),
                 ),
+                const Icon(
+                  Icons.verified_rounded,
+                  color: Color(0xFF55D8C6),
+                  size: 28,
+                ),
               ],
             ),
           ),
-          const SizedBox(height: 24),
-          const Text(
-            'Completed Requests',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF18233B),
-            ),
+
+          const SizedBox(height: 28),
+
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Completed Requests',
+                  style: TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800,
+                    color: navy,
+                  ),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE5F7F4),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${resolvedTickets.length} Jobs',
+                  style: const TextStyle(
+                    color: Color(0xFF119889),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 12),
+
+          const SizedBox(height: 14),
+
           if (resolvedTickets.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(28),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: const Column(
-                children: [
-                  Icon(
-                    Icons.history_rounded,
-                    size: 44,
-                    color: Colors.blueGrey,
-                  ),
-                  SizedBox(height: 12),
-                  Text(
-                    'No completed jobs yet',
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  SizedBox(height: 6),
-                  Text(
-                    'Resolved jobs will appear here.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.blueGrey),
-                  ),
-                ],
-              ),
-            )
+            const _EmptyHistory()
           else
-            ...resolvedTickets.map((ticket) {
-              return Card(
-                margin: const EdgeInsets.only(bottom: 12),
-                elevation: 0,
-                color: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  side: BorderSide(color: Colors.grey.shade200),
-                ),
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(18),
-                  onTap: () => onOpenTicket(ticket),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                ticket.id,
-                                style: const TextStyle(
-                                  color: primaryColor,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            const Icon(
-                              Icons.check_circle_rounded,
-                              color: Colors.green,
-                              size: 20,
-                            ),
-                            const SizedBox(width: 5),
-                            const Text(
-                              'Resolved',
-                              style: TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          ticket.issue,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF18233B),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        _info(Icons.person_outline, ticket.customer),
-                        const SizedBox(height: 6),
-                        _info(Icons.location_on_outlined, ticket.property),
-                        const SizedBox(height: 6),
-                        _info(Icons.calendar_today_outlined, ticket.created),
-                        if (ticket.notes.trim().isNotEmpty) ...[
-                          const SizedBox(height: 12),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF5F7FC),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              'Work Notes: ${ticket.notes}',
-                              style: const TextStyle(
-                                fontSize: 13,
-                                color: Color(0xFF526079),
-                              ),
-                            ),
-                          ),
-                        ],
-                        const SizedBox(height: 12),
-                        const Align(
-                          alignment: Alignment.centerRight,
-                          child: Text(
-                            'View Details  →',
-                            style: TextStyle(
-                              color: primaryColor,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
+            ...resolvedTickets.asMap().entries.map((entry) {
+              final index = entry.key;
+              final ticket = entry.value;
+
+              return _HistoryTicketCard(
+                ticket: ticket,
+                index: index,
+                onTap: () => onOpenTicket(ticket),
               );
             }),
         ],
       ),
     );
   }
+}
 
-  Widget _info(IconData icon, String text) {
+class _HistoryTicketCard extends StatelessWidget {
+  const _HistoryTicketCard({
+    required this.ticket,
+    required this.index,
+    required this.onTap,
+  });
+
+  final RepairTicket ticket;
+  final int index;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: 350 + (index * 60)),
+      curve: Curves.easeOut,
+      builder: (context, value, child) {
+        return Opacity(
+          opacity: value,
+          child: Transform.translate(
+            offset: Offset(0, 12 * (1 - value)),
+            child: child,
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: const Color(0xFFE8EDF4),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF172B4D).withValues(alpha: 0.035),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(18),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(18),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Ticket ID and resolved status
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          ticket.id,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Color(0xFF4779D8),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE5F7F4),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.check_circle_rounded,
+                              color: Color(0xFF239B72),
+                              size: 14,
+                            ),
+                            SizedBox(width: 5),
+                            Text(
+                              'Resolved',
+                              style: TextStyle(
+                                color: Color(0xFF239B72),
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  Text(
+                    ticket.issue,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF172B4D),
+                      height: 1.4,
+                    ),
+                  ),
+
+                  const SizedBox(height: 15),
+
+                  const Divider(
+                    height: 1,
+                    color: Color(0xFFEDF1F6),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  _HistoryInfo(
+                    icon: Icons.person_outline_rounded,
+                    text: ticket.customer,
+                  ),
+                  const SizedBox(height: 10),
+
+                  _HistoryInfo(
+                    icon: Icons.location_on_outlined,
+                    text: ticket.property,
+                  ),
+                  const SizedBox(height: 10),
+
+                  _HistoryInfo(
+                    icon: Icons.calendar_today_outlined,
+                    text: ticket.created,
+                  ),
+
+                  // Existing notes condition - unchanged.
+                  if (ticket.notes.trim().isNotEmpty) ...[
+                    const SizedBox(height: 15),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(13),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F7FB),
+                        borderRadius: BorderRadius.circular(13),
+                        border: Border.all(
+                          color: const Color(0xFFE8EDF4),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(
+                                Icons.notes_rounded,
+                                size: 15,
+                                color: Color(0xFF16A99B),
+                              ),
+                              SizedBox(width: 6),
+                              Text(
+                                'WORK NOTES',
+                                style: TextStyle(
+                                  color: Color(0xFF119889),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 7),
+                          Text(
+                            ticket.notes,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF526079),
+                              height: 1.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 16),
+
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'View Details',
+                          style: TextStyle(
+                            color: Color(0xFF16A99B),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        SizedBox(width: 6),
+                        Icon(
+                          Icons.arrow_forward_rounded,
+                          color: Color(0xFF16A99B),
+                          size: 16,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HistoryInfo extends StatelessWidget {
+  const _HistoryInfo({
+    required this.icon,
+    required this.text,
+  });
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 17, color: Colors.blueGrey),
-        const SizedBox(width: 8),
+        Icon(
+          icon,
+          size: 17,
+          color: const Color(0xFF8492A6),
+        ),
+        const SizedBox(width: 9),
         Expanded(
           child: Text(
             text,
             style: const TextStyle(
               color: Color(0xFF526079),
-              fontSize: 13,
+              fontSize: 12,
+              height: 1.4,
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+class _EmptyHistory extends StatelessWidget {
+  const _EmptyHistory();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: 22,
+        vertical: 34,
+      ),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: const Color(0xFFE8EDF4),
+        ),
+      ),
+      child: const Column(
+        children: [
+          Icon(
+            Icons.history_rounded,
+            size: 46,
+            color: Color(0xFF16A99B),
+          ),
+          SizedBox(height: 14),
+          Text(
+            'No Completed Jobs Yet',
+            style: TextStyle(
+              color: Color(0xFF172B4D),
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          SizedBox(height: 7),
+          Text(
+            'Resolved jobs will appear here.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFF718096),
+              fontSize: 12,
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../data/technician_store.dart';
 import '../models/repair_ticket.dart';
 import '../services/api_service.dart';
@@ -29,16 +30,30 @@ class ServiceHomePage extends StatefulWidget {
 }
 
 class _ServiceHomePageState extends State<ServiceHomePage> {
+  // Premium Navy + Teal theme
+  static const Color navyColor = Color(0xFF172B4D);
+  static const Color navyDarkColor = Color(0xFF10213D);
+  static const Color tealColor = Color(0xFF16B8A6);
+  static const Color backgroundColor = Color(0xFFF4F7FB);
+  static const Color textColor = Color(0xFF26354D);
+  static const Color mutedColor = Color(0xFF8491A5);
+
   late String role;
+
   int selectedTab = 0;
+
   List<RepairTicket> tickets = [];
+
   String technicianId = '';
 
   bool isTicketsLoading = false;
   String ticketsError = '';
+
   Map<String, dynamic>? dashboardData;
+
   bool isDashboardLoading = false;
   String dashboardError = '';
+
   List<String> get technicianNames => [
     'Unassigned',
     ...technicianStore.map((technician) => technician['name']!),
@@ -60,9 +75,15 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
     loadTickets();
   }
 
+  // ============================================================
+  // TECHNICIAN SESSION
+  // ============================================================
+
   Future<void> loadTechnicianSession() async {
     final id = await AuthService.getUserId();
+
     if (!mounted) return;
+
     setState(() {
       technicianId = id;
     });
@@ -71,6 +92,10 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
     debugPrint('Technician Name: ${widget.technicianName}');
     debugPrint('Technician ID: $technicianId');
   }
+
+  // ============================================================
+  // LOAD TICKETS
+  // ============================================================
 
   Future<void> loadTickets() async {
     debugPrint('========== TICKETS API START ==========');
@@ -82,14 +107,19 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
           ticketsError = '';
         });
       }
+
       final response = await ApiService.get('tickets');
+
       debugPrint('TICKETS FULL RESPONSE: $response');
+
       if (response['success'] != true) {
         throw Exception(
           response['message'] ?? 'Failed to load repair tickets',
         );
       }
+
       final data = response['data'];
+
       if (data is! Map || data['tickets'] is! List) {
         throw Exception('Invalid tickets API response');
       }
@@ -99,11 +129,14 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
         if (item is! Map) {
           throw Exception('Invalid ticket data received');
         }
+
         return RepairTicket.fromJson(
           Map<String, dynamic>.from(item),
         );
       }).toList();
+
       if (!mounted) return;
+
       setState(() {
         tickets = loadedTickets;
       });
@@ -112,6 +145,7 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
       debugPrint('========== TICKETS API SUCCESS ==========');
     } catch (e) {
       debugPrint('TICKETS API ERROR: $e');
+
       if (mounted) {
         setState(() {
           ticketsError = e.toString();
@@ -126,17 +160,26 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
     }
   }
 
+  // ============================================================
+  // LOAD TECHNICIANS
+  // ============================================================
+
   Future<void> loadTechnicians() async {
     debugPrint('========== TECHNICIANS API START ==========');
+
     try {
       final response = await ApiService.get('technicians');
+
       debugPrint('TECHNICIANS FULL RESPONSE: $response');
+
       if (response['success'] != true) {
         throw Exception(
           response['message'] ?? 'Failed to load technicians',
         );
       }
+
       final data = response['data'];
+
       if (data is! Map || data['technicians'] is! List) {
         throw Exception('Invalid technicians API response');
       }
@@ -151,7 +194,8 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
           'email': (technician['email'] ?? '').toString(),
           'phone': (technician['phone'] ?? '').toString(),
           'role': (technician['role'] ?? 'Technician').toString(),
-          'is_active': technician['is_active'] == true ||
+          'is_active':
+          technician['is_active'] == true ||
               technician['is_active'] == 1
               ? '1'
               : '0',
@@ -173,6 +217,10 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
       debugPrint('TECHNICIANS API ERROR: $e');
     }
   }
+
+  // ============================================================
+  // LOAD DASHBOARD
+  // ============================================================
 
   Future<void> loadDashboard() async {
     debugPrint('========== DASHBOARD API START ==========');
@@ -224,6 +272,10 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
     }
   }
 
+  // ============================================================
+  // VISIBLE TICKETS
+  // ============================================================
+
   List<RepairTicket> get visibleTickets {
     if (role == 'Admin') return tickets;
 
@@ -251,6 +303,9 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
     return assignedTickets;
   }
 
+  // ============================================================
+  // OPEN TICKET
+  // ============================================================
 
   Future<void> openTicket(RepairTicket ticket) async {
     debugPrint('OPEN TICKET: ${ticket.id}');
@@ -291,6 +346,9 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
     }
   }
 
+  // ============================================================
+  // ROLE SWITCH
+  // ============================================================
 
   void switchRole(String newRole) {
     setState(() {
@@ -298,6 +356,11 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
       selectedTab = 0;
     });
   }
+
+  // ============================================================
+  // LOGOUT
+  // ============================================================
+
   void logout() {
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(
@@ -307,9 +370,195 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
     );
   }
 
+  // ============================================================
+  // ERROR SCREEN
+  // ============================================================
+
+  Widget _buildTicketsError() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: const Color(0xFFE8EDF4),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: navyColor.withValues(alpha: 0.05),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFEEEE),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Icon(
+                  Icons.error_outline_rounded,
+                  color: Color(0xFFE05252),
+                  size: 32,
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Text(
+                'Unable to load repair requests',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: navyColor,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                ticketsError,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: mutedColor,
+                  fontSize: 13,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 22),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: loadTickets,
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: const Text('Retry'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: navyColor,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // LOADING SCREEN
+  // ============================================================
+
+  Widget _buildLoadingScreen() {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 34,
+            height: 34,
+            child: CircularProgressIndicator(
+              strokeWidth: 3,
+              color: tealColor,
+            ),
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Loading repair requests...',
+            style: TextStyle(
+              color: mutedColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // APP BAR
+  // ============================================================
+
+  Widget _buildAppBarTitle() {
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [
+                tealColor,
+                Color(0xFF0E9E91),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(13),
+            boxShadow: [
+              BoxShadow(
+                color: tealColor.withValues(alpha: 0.25),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.home_repair_service_rounded,
+            color: Colors.white,
+            size: 23,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'SECURIS',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 16,
+                letterSpacing: 1.3,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              role == 'Admin' ? 'ADMIN PANEL' : 'TECHNICIAN PANEL',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.72),
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.4,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ============================================================
+  // BUILD
+  // ============================================================
+
   @override
   Widget build(BuildContext context) {
     final currentTickets = visibleTickets;
+
     final pages = role == 'Admin'
         ? <Widget>[
       AdminDashboardScreen(
@@ -320,50 +569,28 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
         onViewSchedule: () => setState(() => selectedTab = 3),
         dashboardData: dashboardData,
       ),
+
       if (isTicketsLoading)
-        const Center(
-          child: CircularProgressIndicator(),
-        )
+        _buildLoadingScreen()
       else if (ticketsError.isNotEmpty)
-        Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.error_outline,
-                  color: Colors.red,
-                  size: 40,
-                ),
-                const SizedBox(height: 12),
-                const Text('Unable to load repair requests'),
-                const SizedBox(height: 8),
-                Text(
-                  ticketsError,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: loadTickets,
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Retry'),
-                ),
-              ],
-            ),
-          ),
-        )
+        _buildTicketsError()
       else
         RepairRequestsScreen(
           tickets: currentTickets,
           onOpenTicket: openTicket,
         ),
+
       TechnicianManagementScreen(
         tickets: tickets,
         technicians: technicianStore,
         onChanged: loadTechnicians,
       ),
-      ScheduleScreen(tickets: currentTickets, onOpenTicket: openTicket),
+
+      ScheduleScreen(
+        tickets: currentTickets,
+        onOpenTicket: openTicket,
+      ),
+
       ProfileScreen(
         role: role,
         onSwitchRole: () => switchRole('Technician'),
@@ -375,12 +602,22 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
         tickets: currentTickets,
         onOpenTicket: openTicket,
       ),
-      MyJobsScreen(tickets: currentTickets, onOpenTicket: openTicket),
-      ScheduleScreen(tickets: currentTickets, onOpenTicket: openTicket),
+
+      MyJobsScreen(
+        tickets: currentTickets,
+        onOpenTicket: openTicket,
+      ),
+
+      ScheduleScreen(
+        tickets: currentTickets,
+        onOpenTicket: openTicket,
+      ),
+
       WorkHistoryScreen(
         tickets: currentTickets,
         onOpenTicket: openTicket,
       ),
+
       ProfileScreen(
         role: role,
         onSwitchRole: () => switchRole('Admin'),
@@ -444,66 +681,96 @@ class _ServiceHomePageState extends State<ServiceHomePage> {
       ),
     ];
 
-    if (selectedTab >= pages.length) selectedTab = 0;
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: const Color(0xFF2457D6),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(
-                Icons.home_repair_service_rounded,
-                color: Colors.white,
-                size: 22,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'SECURIS',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                    letterSpacing: 1.1,
-                  ),
-                ),
-                Text(
-                  role == 'Admin' ? 'ADMIN PANEL' : 'TECHNICIAN PANEL',
-                  style: const TextStyle(fontSize: 9, letterSpacing: 1.2),
-                ),
-              ],
-            ),
-          ],
+    if (selectedTab >= pages.length) {
+      selectedTab = 0;
+    }
+
+    return Theme(
+      data: Theme.of(context).copyWith(
+        scaffoldBackgroundColor: backgroundColor,
+        colorScheme: Theme.of(context).colorScheme.copyWith(
+          primary: tealColor,
+          secondary: tealColor,
+          surface: Colors.white,
         ),
-        actions: [
-          IconButton(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Notifications will be connected later.'),
-                ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: navyColor,
+          foregroundColor: Colors.white,
+          elevation: 0,
+          centerTitle: false,
+          toolbarHeight: 70,
+          titleSpacing: 18,
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: Colors.white,
+          elevation: 8,
+          height: 70,
+          indicatorColor: tealColor.withValues(alpha: 0.13),
+          labelTextStyle: WidgetStateProperty.resolveWith<TextStyle>(
+                (states) {
+              final selected = states.contains(WidgetState.selected);
+
+              return TextStyle(
+                fontSize: 11,
+                fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                color: selected ? navyColor : mutedColor,
               );
             },
-            icon: const Icon(Icons.notifications_none_rounded),
           ),
-        ],
+          iconTheme: WidgetStateProperty.resolveWith<IconThemeData>(
+                (states) {
+              final selected = states.contains(WidgetState.selected);
+
+              return IconThemeData(
+                size: 23,
+                color: selected ? tealColor : mutedColor,
+              );
+            },
+          ),
+        ),
       ),
-      body: SafeArea(
-        child: IndexedStack(index: selectedTab, children: pages),
-      ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: selectedTab,
-        onDestinationSelected: (index) {
-          setState(() => selectedTab = index);
-        },
-        destinations: destinations,
+      child: Scaffold(
+        appBar: AppBar(
+          title: _buildAppBarTitle(),
+          actions: [
+            IconButton(
+              tooltip: 'Notifications',
+              onPressed: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Notifications will be connected later.',
+                    ),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+              },
+              icon: const Icon(
+                Icons.notifications_none_rounded,
+                color: Colors.white,
+                size: 25,
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
+
+        body: SafeArea(
+          child: IndexedStack(
+            index: selectedTab,
+            children: pages,
+          ),
+        ),
+
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: selectedTab,
+          onDestinationSelected: (index) {
+            setState(() {
+              selectedTab = index;
+            });
+          },
+          destinations: destinations,
+        ),
       ),
     );
   }
